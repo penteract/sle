@@ -9,6 +9,7 @@ import itertools
 np.random.seed(19680801)
 
 rng = default_rng()
+print(rng._bit_generator.state)
 
 def colorize(z):
     r = np.abs(z)
