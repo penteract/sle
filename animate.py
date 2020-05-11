@@ -1,6 +1,4 @@
-#adapted from mandelbrot set sample code
-# and https://stackoverflow.com/questions/17044052/mathplotlib-imshow-complex-2d-array
-# and http://jakevdp.github.io/blog/2012/08/18/matplotlib-animation-tutorial/
+#! /usr/bin/env python3
 import numpy as np
 from numpy import pi
 from colorsys import hls_to_rgb
@@ -11,15 +9,14 @@ import itertools
 import matplotlib
 from time import strftime
 
-
 def main():
     """Stuff you can easily change"""
     xmin, xmax, xn = -2,2, 300
     ymax, yn = xmax-xmin, xn
     
-    runtime = 4
+    runtime = 3
     timestep = 0.001
-    framerate=10
+    framerate = 10
     
     colour = colIm # Change to `colourize` to see argument and modulus as hue and luminosity
 
@@ -34,8 +31,10 @@ def main():
         """The driving function"""
         #Currently cheats, because we know it's called in once per timestep
         return next(r)
-    draw_sle(zeta, colour, xmin,xmax,xn, ymax,yn,
-             runtime, timestep,framerate, save=False )
+    draw_sle(zeta=None, kappa=kappa, colour=colour,
+             xmax=xmax, xmin=xmin, xn=xn,
+             runtime=runtime, timestep=timestep, framerate=framerate,
+             save=False )
 
 
 rng = default_rng()
@@ -101,13 +100,41 @@ def slepart(Gt, zeta, tstart,tstop,tstep):
     return Gt
 
 
-def draw_sle(zeta, colour, xmin=-2, xmax=2, xn=2,
+def brownian(tstep,kappa=1):
+    cur = 0
+    while True:
+        cur+= rng.normal(scale=((kappa*tstep)**0.5))
+        yield cur
+
+##def zeta(t,r=brownian(timestep,kappa)):
+##    """The driving function"""
+##    #Currently cheats, because we know it's called in once per timestep
+##    return next(r)
+
+def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
              ymax=None, yn=None,
-             runtime=4, timestep=None, framerate=10,
+             runtime=4, timestep=0.001, framerate=10,
              save=False):
+    """Compute and display the Schramm-Loewner evolution driven by brownian motion
+
+    zeta     : function of t driving the sle
+    kappa    : scales brownian motion
+    colour   : function to turn complex numbers into pixels
+        - 'colIm' (default) ~ hue = log(Im(z)), lum=Re(z)
+        - 'colConformal'    ~ Highlights the fact that the mapping is conformal
+        - 'colourize'       ~ hue=arg(z) lum=|z|
+    xmax     : greatest x coordinate (default 2)
+    xn       : Horizontal resolution(default 300)
+    timestep : size of partial (default 0.001)
+    framerate: Frames to display per unit time
+    save     : either True or quoted destination filename  (default False)"""
+    if zeta is None:
+        r=brownian(timestep,kappa)
+        zeta = lambda t: r.__next__()
     if save:
         matplotlib.use("Agg")
-        
+    if xmin is None:
+        xmin = -xmax
     if ymax is None:
         ymax = xmax-xmin
     if yn is None:
@@ -119,6 +146,7 @@ def draw_sle(zeta, colour, xmin=-2, xmax=2, xn=2,
 
     def dostep(i):
         nonlocal Gt
+        if i*10-int(i*10) < timestep/2: print(i)
         Gt=slepart(Gt, zeta, i, i + 1/framerate,timestep)
         img=colour(Gt) #.imag*100
         im.set_data(img)
@@ -129,9 +157,7 @@ def draw_sle(zeta, colour, xmin=-2, xmax=2, xn=2,
     im.set_data(img)
     ani = animation.FuncAnimation(im.figure,dostep,init_func=init,
                             frames=np.arange(0,runtime,1/framerate),
-                            # breaks if this is below 10 and framerate is low.
-                            # I don't know why
-                            interval=0,
+                            interval=20,
                             blit=True, repeat=False)
     if save:
         if not isinstance(save,str):
@@ -141,4 +167,12 @@ def draw_sle(zeta, colour, xmin=-2, xmax=2, xn=2,
     else:
         plt.show()
 
-main()
+if __name__=="__main__":
+    import argumentclinic
+    argumentclinic.entrypoint(draw_sle,lambda x:eval(x)) #trick to allow colConformal
+    
+
+#parts taken from:
+#mandelbrot set sample code
+#https://stackoverflow.com/questions/17044052/mathplotlib-imshow-complex-2d-array
+#http://jakevdp.github.io/blog/2012/08/18/matplotlib-animation-tutorial/
