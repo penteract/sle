@@ -3,11 +3,12 @@ import numpy as np
 from numpy import pi
 from colorsys import hls_to_rgb
 import matplotlib.animation as animation
-from numpy.random import default_rng
+from numpy.random import default_rng, SeedSequence
 import matplotlib.pyplot as plt
 import itertools
 import matplotlib
 from time import strftime
+import math #for eval'd command line arguments
 
 def main():
     """Stuff you can easily change"""
@@ -16,7 +17,7 @@ def main():
     
     runtime = 3
     timestep = 0.001
-    framerate = 10
+    perframe = 100
     
     colour = colIm # Change to `colourize` to see argument and modulus as hue and luminosity
 
@@ -33,12 +34,9 @@ def main():
         return next(r)
     draw_sle(zeta=None, kappa=kappa, colour=colour,
              xmax=xmax, xmin=xmin, xn=xn,
-             runtime=runtime, timestep=timestep, framerate=framerate,
+             runtime=runtime, timestep=timestep, perframe=perframe,
              save=False )
 
-
-rng = default_rng()
-print(rng._bit_generator.state)
 
 
 
@@ -88,36 +86,66 @@ def hsl2rgb(h,s,l):
 def slesetup(xmin, xmax, ymax, xn, yn):
     """Return an appropriately dimensioned numpy array"""
     X = np.linspace(xmin, xmax, xn).astype(np.float32)
-    Y = np.linspace(0, ymax, yn).astype(np.float32)
+    Y = np.linspace(ymax/yn, ymax, yn).astype(np.float32)
     return X[:, None] + Y * 1j
 
-def slepart(Gt, zeta, tstart,tstop,tstep):
+def slepart(Gt, zeta, tstart,tsteps,tstep,scale=lambda x:x**2):
     """Advance the sle driven by zeta.
     Given that Gt describes g at tstart,
-    returns an array describing g at tstep"""
-    for t in np.arange(tstart,tstop,tstep):
-        Gt += tstep*(2/(Gt-zeta(t)))
+    returns an array describing g at tstop"""
+    if scale:
+        prev=scale(tstart-tstep)
+        for n in range(tsteps):
+            cur = scale(tstart+n*tstep)
+            Gt += (cur-prev)*(2/(Gt-zeta(cur)))
+            prev=cur
+    else:
+        for t in np.arange(tstart,tstop,tstep):
+            Gt += tstep*(2/(Gt-zeta(t)))
     return Gt
 
 
-def brownian(tstep,kappa=1):
-    cur = 0
-    while True:
-        cur+= rng.normal(scale=((kappa*tstep)**0.5))
-        yield cur
 
-##def zeta(t,r=brownian(timestep,kappa)):
-##    """The driving function"""
-##    #Currently cheats, because we know it's called in once per timestep
-##    return next(r)
+def reproducible_brownian(kappa=1, size=10, resolution=10**-7, rng_=None):
+    """probably faster and more statistically sound than the one which makes a tree of rngs"""
+    if rng_ is None:
+        rng_ = rng
+    pts = rng.standard_normal(int(size/resolution))*(resolution*kappa)**0.5
+    pts=np.cumsum(pts)
+    pts=np.insert(pts,0,0)
+    def f(t):
+        #if t<resolution: print(t)
+        assert 0<=t<=size
+        t/=resolution
+        if t==(it:=int(t)):
+            return pts[it]
+        else:
+            return pts[it]*(it+1-t) + pts[it+1]*(t-it)
+            #could interpolate (+rng_.normal(scale=((t-it)*(it+1-t))**0.5)*scale), but that would lose reproducability
+    return f
+
+def brownian(kappa=1, rng_=None):
+    """probably faster and more statistically sound than the one which makes a tree of rngs"""
+    if rng_ is None:
+        rng_ = rng
+    cur=0
+    last=0
+    def f(t):
+        nonlocal cur,last
+        if t==0: return 0
+        assert t>last
+        cur+=rng_.normal()*((t-last)*kappa)**0.5
+        last=t
+        return cur
+    return f
 
 def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
-             ymax=None, yn=None,
-             runtime=4, timestep=0.001, framerate=10,
+             ymax=None, yn=None, seed=None,
+             runtime=2, scale=(lambda t:t**2), timestep=0.001, perframe=100,
              save=False):
     """Compute and display the Schramm-Loewner evolution driven by brownian motion
 
-    zeta     : function of t driving the sle
+    zeta     : function of t driving the sle (default brownian(kappa))
     kappa    : scales brownian motion
     colour   : function to turn complex numbers into pixels
         - 'colIm' (default) ~ hue = log(Im(z)), lum=Re(z)
@@ -125,12 +153,20 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
         - 'colourize'       ~ hue=arg(z) lum=|z|
     xmax     : greatest x coordinate (default 2)
     xn       : Horizontal resolution(default 300)
-    timestep : size of partial (default 0.001)
-    framerate: Frames to display per unit time
+    seed     : seed for rng
+    runtime  : length of time in arbitrary units (default 2)
+    scale    : dynamically adjust the size of simulation steps
+    timestep : size of steps through runtime (default 0.001)
+    perframe : steps to compute per frame
     save     : either True or quoted destination filename  (default False)"""
+    # Initialize unspecified arguments
+    seed=SeedSequence(seed)
+    print(seed)
+    global rng
+    rng=default_rng(seed)
+    # Setup G0
     if zeta is None:
-        r=brownian(timestep,kappa)
-        zeta = lambda t: r.__next__()
+        zeta=brownian(kappa)
     if save:
         matplotlib.use("Agg")
     if xmin is None:
@@ -140,23 +176,21 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
     if yn is None:
         yn=xn
     im = plt.imshow([[0]],origin="lower",extent=(xmin,xmax,0,ymax))
-    Gt=None
-    def init():
-        return [im]
-
-    def dostep(i):
-        nonlocal Gt
-        if i*10-int(i*10) < timestep/2: print(i)
-        Gt=slepart(Gt, zeta, i, i + 1/framerate,timestep)
-        img=colour(Gt) #.imag*100
-        im.set_data(img)
-        return [im]
-    #init()
     Gt = slesetup(xmin, xmax, ymax, xn, yn)
     img = colour(Gt)
     im.set_data(img)
+    def init():
+        return [im]
+    def dostep(i):
+        nonlocal Gt
+        r=runtime/10
+        if i/r-int(i/r) < timestep: print(i)
+        Gt=slepart(Gt, zeta, i, min(perframe, int((runtime-i)/timestep)),timestep,scale=scale)
+        img=colour(Gt) #.imag*100
+        im.set_data(img)
+        return [im]
     ani = animation.FuncAnimation(im.figure,dostep,init_func=init,
-                            frames=np.arange(0,runtime,1/framerate),
+                            frames=np.arange(0,runtime,perframe*timestep),
                             interval=20,
                             blit=True, repeat=False)
     if save:
@@ -173,6 +207,6 @@ if __name__=="__main__":
     
 
 #parts taken from:
-#mandelbrot set sample code
+#mandelbrot set matplotlib sample code
 #https://stackoverflow.com/questions/17044052/mathplotlib-imshow-complex-2d-array
 #http://jakevdp.github.io/blog/2012/08/18/matplotlib-animation-tutorial/
