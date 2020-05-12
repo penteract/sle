@@ -1,7 +1,6 @@
 #! /usr/bin/env python3
 import numpy as np
 from numpy import pi
-from colorsys import hls_to_rgb
 import matplotlib.animation as animation
 from numpy.random import default_rng, SeedSequence
 import matplotlib.pyplot as plt
@@ -9,36 +8,6 @@ import itertools
 import matplotlib
 from time import strftime
 import math #for eval'd command line arguments
-
-def main():
-    """Stuff you can easily change"""
-    xmin, xmax, xn = -2,2, 300
-    ymax, yn = xmax-xmin, xn
-    
-    runtime = 3
-    timestep = 0.001
-    perframe = 100
-    
-    colour = colIm # Change to `colourize` to see argument and modulus as hue and luminosity
-
-    
-    kappa=1
-    def brownian(tstep):
-        cur = 0
-        while True:
-            cur+= rng.normal(scale=((kappa*tstep)**0.5))
-            yield cur
-    def zeta(t,r=brownian(timestep)):
-        """The driving function"""
-        #Currently cheats, because we know it's called in once per timestep
-        return next(r)
-    draw_sle(zeta=None, kappa=kappa, colour=colour,
-             xmax=xmax, xmin=xmin, xn=xn,
-             runtime=runtime, timestep=timestep, perframe=perframe,
-             save=False )
-
-
-
 
 def colIm(z):
     """Returns a colour where log(Im(z)) is represented by hue.
@@ -69,10 +38,6 @@ def colourize(z):
     c = hsl2rgb(h,s,l)
     return c
 
-def hsl2rgbslow(h,s,l):
-    c = np.vectorize(hls_to_rgb) ((h/(2*pi))%1,l,s) # --> tuple
-    c = np.array(c)  # -->  array of (3,n,m) shape, but need (n,m,3)
-    return c.swapaxes(0,2)
 def hsl2rgb(h,s,l):
     """Computes rgb efficiently
     https://en.wikipedia.org/wiki/HSL_and_HSV#HSL_to_RGB_alternative"""
@@ -80,19 +45,22 @@ def hsl2rgb(h,s,l):
     def f(n):
         k=(n+h/(pi/6))%12
         return l-a*np.clip(np.minimum(k-3,9-k),-1,1)
-    return np.array((f(0),f(8),f(4))).swapaxes(0,-1)
+    rgb = np.array((f(0),f(8),f(4))).swapaxes(0,-1)
+    rgb[np.any(np.isnan(rgb),axis=-1)]=[1,1,1]
+    #rgb=rgb
+    return rgb
     
 
 def slesetup(xmin, xmax, ymax, xn, yn):
-    """Return an appropriately dimensioned numpy array"""
+    """Return an xn by yn numpy array of complex numbers from xmin to xmax and 0 to ymax"""
     X = np.linspace(xmin, xmax, xn).astype(np.float32)
     Y = np.linspace(ymax/yn, ymax, yn).astype(np.float32)
     return X[:, None] + Y * 1j
 
 def slepart(Gt, zeta, tstart,tsteps,tstep,scale=lambda x:x**2):
     """Advance the sle driven by zeta.
-    Given that Gt describes g at tstart,
-    returns an array describing g at tstop"""
+    Given that Gt describes g at scale(tstart),
+    returns an array describing g at scale(tstart+tsteps*tstep)"""
     if scale:
         prev=scale(tstart-tstep)
         for n in range(tsteps):
@@ -139,18 +107,38 @@ def brownian(kappa=1, rng_=None):
         return cur
     return f
 
+def levy(kappa=1, jumpfreq=10, jumpsz=0.1, rng_=None):
+    """probably faster and more statistically sound than the one which makes a tree of rngs"""
+    if rng_ is None:
+        rng_ = rng
+    cur=0
+    last=0
+    def f(t):
+        nonlocal cur,last
+        if t==0: return 0
+        assert t>last
+        dt = t-last
+        cur+=rng_.normal()*(dt*kappa)**0.5
+        for i in range(rng_.poisson(jumpfreq*dt)):
+            k=rng_.normal()*jumpsz
+            print(k)
+            cur+=k
+        last=t
+        return cur
+    return f
+
 def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
              ymax=None, yn=None, seed=None,
              runtime=2, scale=(lambda t:t**2), timestep=0.001, perframe=100,
-             save=False):
+             save=False, figsize=10):
     """Compute and display the Schramm-Loewner evolution driven by brownian motion
 
     zeta     : function of t driving the sle (default brownian(kappa))
     kappa    : scales brownian motion
     colour   : function to turn complex numbers into pixels
-        - 'colIm' (default) ~ hue = log(Im(z)), lum=Re(z)
+        - 'colIm' (default) ~ hue = log(Im(z)), lum = Re(z)
         - 'colConformal'    ~ Highlights the fact that the mapping is conformal
-        - 'colourize'       ~ hue=arg(z) lum=|z|
+        - 'colourize'       ~ hue = arg(z) lum = |z|
     xmax     : greatest x coordinate (default 2)
     xn       : Horizontal resolution(default 300)
     seed     : seed for rng
@@ -175,14 +163,17 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
         ymax = xmax-xmin
     if yn is None:
         yn=xn
-    im = plt.imshow([[0]],origin="lower",extent=(xmin,xmax,0,ymax))
+    plt.figure(figsize=(figsize,figsize))
+    im = plt.imshow([[0]],origin="lower",extent=(xmin,xmax,0,ymax))#,interpolation="antialiased")
+    plt.axis("off")
+    global Gt
     Gt = slesetup(xmin, xmax, ymax, xn, yn)
     img = colour(Gt)
     im.set_data(img)
     def init():
         return [im]
     def dostep(i):
-        nonlocal Gt
+        global Gt
         r=runtime/10
         if i/r-int(i/r) < timestep: print(i)
         Gt=slepart(Gt, zeta, i, min(perframe, int((runtime-i)/timestep)),timestep,scale=scale)
