@@ -92,25 +92,22 @@ def reproducible_brownian(kappa=1, size=10, resolution=10**-7, rng_=None):
             #could interpolate (+rng_.normal(scale=((t-it)*(it+1-t))**0.5)*scale), but that would lose reproducability
     return f
 
-def brownian(kappa=1, rng_=None):
+def brownian(kappa=1):
     """probably faster and more statistically sound than the one which makes a tree of rngs"""
-    if rng_ is None:
-        rng_ = rng
+    global rng
     cur=0
     last=0
     def f(t):
         nonlocal cur,last
         if t==0: return 0
         assert t>last
-        cur+=rng_.normal()*((t-last)*kappa)**0.5
+        cur+=rng.normal()*((t-last)*kappa)**0.5
         last=t
         return cur
     return f
 
-def levy(kappa=1, jumpfreq=10, jumpsz=0.1, rng_=None):
-    """probably faster and more statistically sound than the one which makes a tree of rngs"""
-    if rng_ is None:
-        rng_ = rng
+def levy(kappa=1, jumpfreq=1, jumpdist=lambda rng: rng.normal()):
+    global rng
     cur=0
     last=0
     def f(t):
@@ -118,9 +115,9 @@ def levy(kappa=1, jumpfreq=10, jumpsz=0.1, rng_=None):
         if t==0: return 0
         assert t>last
         dt = t-last
-        cur+=rng_.normal()*(dt*kappa)**0.5
-        for i in range(rng_.poisson(jumpfreq*dt)):
-            k=rng_.normal()*jumpsz
+        cur+=rng.normal()*(dt*kappa)**0.5
+        for i in range(rng.poisson(jumpfreq*dt)):
+            k=jumpdist(rng)
             print(k)
             cur+=k
         last=t
@@ -130,7 +127,7 @@ def levy(kappa=1, jumpfreq=10, jumpsz=0.1, rng_=None):
 def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
              ymax=None, yn=None, seed=None,
              runtime=2, scale=(lambda t:t**2), timestep=0.001, perframe=100,
-             save=False, figsize=10):
+             save=False, figsize=10, borders=True):
     """Compute and display the Schramm-Loewner evolution driven by brownian motion
 
     zeta     : function of t driving the sle (default brownian(kappa))
@@ -146,7 +143,8 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
     scale    : dynamically adjust the size of simulation steps
     timestep : size of steps through runtime (default 0.001)
     perframe : steps to compute per frame
-    save     : either True or quoted destination filename  (default False)"""
+    save     : either True or quoted destination filename  (default False)
+    borders  : set to False to hide axes and borders (default True)"""
     # Initialize unspecified arguments
     seed=SeedSequence(seed)
     print(seed)
@@ -165,7 +163,9 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
         yn=xn
     plt.figure(figsize=(figsize,figsize))
     im = plt.imshow([[0]],origin="lower",extent=(xmin,xmax,0,ymax))#,interpolation="antialiased")
-    plt.axis("off")
+    if not borders:
+        plt.axis("off")
+        plt.tight_layout(0)
     global Gt
     Gt = slesetup(xmin, xmax, ymax, xn, yn)
     img = colour(Gt)
