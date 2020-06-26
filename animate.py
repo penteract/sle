@@ -26,9 +26,8 @@ def colConformal(z):
     c = hsl2rgb(h,s,l)
     return c
 
-
 def colourize(z):
-    """colour a complex """
+    """colour an array of complex numbers using hue for argument and brightness for modulus """
     r = np.abs(z)
     arg = np.angle(z) 
 
@@ -40,7 +39,8 @@ def colourize(z):
 
 def hsl2rgb(h,s,l):
     """Computes rgb efficiently
-    https://en.wikipedia.org/wiki/HSL_and_HSV#HSL_to_RGB_alternative"""
+    https://en.wikipedia.org/wiki/HSL_and_HSV#HSL_to_RGB_alternative
+    Also permutes the axes :)"""
     a=s*np.minimum(l,1-l)
     def f(n):
         k=(n+h/(pi/6))%12
@@ -76,13 +76,17 @@ def slepart(Gt, zeta, tstart,tsteps,tstep,scale=lambda x:x**2):
 
 def reproducible_brownian(kappa=1, size=10, resolution=10**-7, rng_=None):
     """probably faster and more statistically sound than the one which makes a tree of rngs"""
-    if rng_ is None:
-        rng_ = rng
-    pts = rng.standard_normal(int(size/resolution))*(resolution*kappa)**0.5
-    pts=np.cumsum(pts)
-    pts=np.insert(pts,0,0)
+    pts=None
     def f(t):
         #if t<resolution: print(t)
+        nonlocal pts
+        if pts is None:
+                if rng_ is None:
+                    rng_ = rng
+                pts=None
+                pts = rng.standard_normal(int(size/resolution))*(resolution*kappa)**0.5
+                pts=np.cumsum(pts)
+                pts=np.insert(pts,0,0)
         assert 0<=t<=size
         t/=resolution
         if t==(it:=int(t)):
@@ -118,15 +122,55 @@ def levy(kappa=1, jumpfreq=1, jumpdist=lambda rng: rng.normal()):
         cur+=rng.normal()*(dt*kappa)**0.5
         for i in range(rng.poisson(jumpfreq*dt)):
             k=jumpdist(rng)
-            print(k)
+            #0print(k)
             cur+=k
         last=t
         return cur
     return f
 
+
+
+def jumpy(k=1, minjump=0.001):
+    """A process which unfortunately does not converge as minjump->0"""
+    global rng
+    cur=0
+    last=0
+    def f(t):
+        nonlocal cur,last
+        if t==0: return 0
+        assert t>last
+        dt = t-last
+        cur+=rng.normal()*dt**0.5
+        for i in range(rng.poisson(dt/minjump)):
+            u = rng.uniform()/minjump
+            r = k*(rng.integers(2)*2-1)/(u)
+            #0print(k)
+            cur+=r
+        last=t
+        return cur
+    return f
+
+# If there are no functions with jumps that are suitably scale invariant and forgetful,
+# does that mean there are no non-path trees which are scale invariant and have the conformal markov property
+# and is that interesting in graph theory?
+
+
+def jumpyrats(sc=1, fn=lambda n:2**-n,r=100):
+    l = [(m/n,fn(n)) for n in range(1,r) for m in range(1,n)]
+    l.sort()
+    cur = 0
+    i=0
+    def f(t):
+        nonlocal cur,i
+        while i<len(l) and l[i][0]<t:
+            cur+=l[i][1]
+            i+=1
+        return sc*cur
+    return f
+
 def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
              ymax=None, yn=None, seed=None,
-             runtime=2, scale=(lambda t:t**2), timestep=0.001, perframe=100,
+             runtime=2, scale=(lambda t:t**2), dt=0.001, perframe=100,
              save=False, figsize=10, borders=True):
     """Compute and display the Schramm-Loewner evolution driven by brownian motion
 
@@ -141,7 +185,7 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
     seed     : seed for rng
     runtime  : length of time in arbitrary units (default 2)
     scale    : dynamically adjust the size of simulation steps
-    timestep : size of steps through runtime (default 0.001)
+    dt       : size of steps through runtime (default 0.001)
     perframe : steps to compute per frame
     save     : either True or quoted destination filename  (default False)
     borders  : set to False to hide axes and borders (default True)"""
@@ -160,28 +204,28 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
     if ymax is None:
         ymax = xmax-xmin
     if yn is None:
-        yn=xn
+        yn=math.ceil(xn*(ymax/(xmax-xmin)))
     plt.figure(figsize=(figsize,figsize))
-    im = plt.imshow([[0]],origin="lower",extent=(xmin,xmax,0,ymax))#,interpolation="antialiased")
-    if not borders:
-        plt.axis("off")
-        plt.tight_layout(0)
     global Gt
     Gt = slesetup(xmin, xmax, ymax, xn, yn)
     img = colour(Gt)
-    im.set_data(img)
+    im = plt.imshow(img,origin="lower",extent=(xmin,xmax,0,ymax))#,interpolation="antialiased")
+    if not borders:
+        plt.axis("off")
+        plt.tight_layout(0)
+    #im.set_data(img)
     def init():
         return [im]
     def dostep(i):
         global Gt
         r=runtime/10
-        if i/r-int(i/r) < timestep: print(i)
-        Gt=slepart(Gt, zeta, i, min(perframe, int((runtime-i)/timestep)),timestep,scale=scale)
+        if i/r-int(i/r) < dt: print(i)
+        Gt=slepart(Gt, zeta, i, min(perframe, int((runtime-i)/dt)),dt,scale=scale)
         img=colour(Gt) #.imag*100
         im.set_data(img)
         return [im]
     ani = animation.FuncAnimation(im.figure,dostep,init_func=init,
-                            frames=np.arange(0,runtime,perframe*timestep),
+                            frames=np.arange(0,runtime,perframe*dt),
                             interval=20,
                             blit=True, repeat=False)
     if save:
@@ -195,7 +239,8 @@ def draw_sle(zeta=None, kappa=1, colour=colIm, xmax=2, xmin=None, xn=300,
 if __name__=="__main__":
     import argumentclinic
     argumentclinic.entrypoint(draw_sle,lambda x:eval(x)) #trick to allow colConformal
-    
+
+
 
 #parts taken from:
 #mandelbrot set matplotlib sample code
